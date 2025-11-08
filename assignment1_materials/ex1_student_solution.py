@@ -31,7 +31,8 @@ class Solution:
         Returns:
             Homography from source to destination, 3x3 numpy array.
         """
-        
+        #return homography
+        """INSERT YOUR CODE HERE"""
         N = match_p_src.shape[1]
         A = np.zeros((2 * N, 9)) 
         for i in range(N):
@@ -75,7 +76,32 @@ class Solution:
         """
         # return new_image
         """INSERT YOUR CODE HERE"""
-        pass
+        
+        src_h, src_w, _ = src_image.shape # Get source image dimensions
+        dst_h, dst_w, _ = dst_image_shape # Get destination image dimensions
+        forward_map = np.zeros(dst_image_shape, dtype=src_image.dtype) # Create an empty destination image
+        
+        # Iterate over every pixel (y, x) in the SOURCE image
+        for y in range(src_h):
+            for x in range(src_w): 
+                p_src = np.array([x, y, 1])
+                p_dst_prime = homography @ p_src
+                w_prime = p_dst_prime[2]
+                if w_prime == 0:
+                    continue
+                # Normalize
+                x_prime = p_dst_prime[0] / w_prime
+                y_prime = p_dst_prime[1] / w_prime
+                
+                #Round to the nearest integer pixel location
+                x_dst = int(np.round(x_prime))
+                y_dst = int(np.round(y_prime))
+                
+                # Check if the destination pixel is within the bounds
+                if (0 <= x_dst < dst_w) and (0 <= y_dst < dst_h):
+                    forward_map[y_dst, x_dst] = src_image[y, x]
+                    
+        return forward_map
 
     @staticmethod
     def compute_forward_homography_fast(
@@ -106,7 +132,48 @@ class Solution:
         """
         # return new_image
         """INSERT YOUR CODE HERE"""
-        pass
+
+        # Get source and destination dimensions
+        src_h, src_w, _ = src_image.shape
+        dst_h, dst_w, _ = dst_image_shape
+        
+        # Create an empty destination image
+        forward_map = np.zeros(dst_image_shape, dtype=src_image.dtype)
+
+        # (1) Create a meshgrid for the source image
+        xx, yy = np.meshgrid(np.arange(src_w), np.arange(src_h))
+
+        # (2) Generate 3x(H*W) matrix of homogeneous coordinates
+        x_flat = xx.flatten()
+        y_flat = yy.flatten()
+        
+        ones_flat = np.ones(src_h * src_w)
+        p_src_all = np.vstack((x_flat, y_flat, ones_flat))
+
+        # (3) Apply homography and normalize
+        p_dst_prime = homography @ p_src_all
+        w_prime = p_dst_prime[2, :]
+        w_prime[w_prime == 0] = 1e-9 # Avoid division by zero. Replace 0 with a tiny number
+        
+        # Normalize
+        x_prime_norm = p_dst_prime[0, :] / w_prime
+        y_prime_norm = p_dst_prime[1, :] / w_prime
+
+        # (4) Convert coordinates to integers
+        x_dst = np.round(x_prime_norm).astype(int)
+        y_dst = np.round(y_prime_norm).astype(int)
+
+        # (5) Plant the pixels
+        mask = (x_dst >= 0) & (x_dst < dst_w) & \
+               (y_dst >= 0) & (y_dst < dst_h)
+        
+        y_dst_valid = y_dst[mask]
+        x_dst_valid = x_dst[mask]
+        y_src_valid = y_flat[mask].astype(int)
+        x_src_valid = x_flat[mask].astype(int)
+        forward_map[y_dst_valid, x_dst_valid] = src_image[y_src_valid, x_src_valid]
+
+        return forward_map
 
     @staticmethod
     def test_homography(homography: np.ndarray,
