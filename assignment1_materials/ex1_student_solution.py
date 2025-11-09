@@ -202,7 +202,32 @@ class Solution:
         """
         # return fit_percent, dist_mse
         """INSERT YOUR CODE HERE"""
-        pass
+        # stack ones to match_p_src
+        ones = np.ones((1, match_p_src.shape[1]))
+        src_h = np.vstack((match_p_src, ones))
+
+        # apply the homography to src points and normalize
+        proj = homography @ src_h
+        proj /= proj[2, :]  # divide each column by w
+        projected_pts = proj[:2, :]
+
+        # compute squared distances
+        diffs = projected_pts - match_p_dst
+        dists_sq = np.sum(diffs ** 2, axis=0)
+
+        # determine inliers
+        mask = dists_sq <= max_err ** 2
+        num_inliers = np.sum(mask)
+        total_pts = match_p_src.shape[1]
+        fit_percent = num_inliers / total_pts
+
+        # calculate dist_mse between mapped points to dst points for inliers only
+        if num_inliers > 0:
+            dist_mse = np.mean(dists_sq[mask])
+        else:
+            dist_mse = 10 ** 9
+
+        return fit_percent, dist_mse
 
     @staticmethod
     def meet_the_model_points(homography: np.ndarray,
@@ -231,8 +256,29 @@ class Solution:
         """
         # return mp_src_meets_model, mp_dst_meets_model
         """INSERT YOUR CODE HERE"""
-        pass
 
+        # stack ones
+        ones = np.ones((1, match_p_src.shape[1]), dtype=match_p_src.dtype)
+        src_h = np.vstack((match_p_src, ones))  # [x; y; 1]
+
+        # apply homography
+        proj = homography @ src_h  # (3, N)
+
+        # normalize
+        w = proj[2, :]
+        proj /= w  # normalize    w = np.where(np.abs(w) < 1e-9, 1e-9, w)
+        pred = proj[:2, :] / w  # (2, N)
+
+        # compute squared distances
+        diffs = pred - match_p_dst
+        d2 = np.sum(diffs ** 2, axis=0)
+
+        # use mask to filter points
+        mask = d2 <= (max_err ** 2)
+        mp_src_meets_model = match_p_src[:, mask]
+        mp_dst_meets_model = match_p_dst[:, mask]
+
+        return mp_src_meets_model, mp_dst_meets_model
     def compute_homography(self,
                            match_p_src: np.ndarray,
                            match_p_dst: np.ndarray,
@@ -265,7 +311,78 @@ class Solution:
         # k = int(np.ceil(np.log(1 - p) / np.log(1 - w ** n))) + 1
         # return homography
         """INSERT YOUR CODE HERE"""
-        pass
+        N = match_p_src.shape[1]
+        n = 4
+        p = 0.99
+        w = float(inliers_percent)
+        t = max_err
+        d = 0.5
+        # Guard extremes to avoid log(0)
+        w = np.clip(w, 1e-6, 1 - 1e-6)
+
+        k = int(np.ceil(np.log(1 - p) / np.log(1 - w ** n)))
+
+        min_inliers = max(n, int(np.ceil(d * N)))  # need at least d*N (and at least n)
+
+        best_inliers_src = None
+        best_inliers_dst = None
+        best_inlier_count = -1
+        best_mse = np.inf
+        best_homography = None
+
+        idx_all = np.arange(N)
+
+        # k iterations
+        for _ in range(k):
+
+            if N < n:
+                # not enough points
+                break
+
+            # sample n matches
+            sample_idx = np.random.choice(idx_all, size=n, replace=False)
+            Ps4 = match_p_src[:, sample_idx]  # shape (2, 4)
+            Pd4 = match_p_dst[:, sample_idx]  # shape (2, 4)
+
+            # compute the model using these points
+            try:
+                H_t = self.compute_homography_naive(Ps4, Pd4)  # 3x3
+            except Exception:
+                # degenerate sample, skip this iteration
+                continue
+
+            # inliers for this model
+            Ps_in, Pd_in = self.meet_the_model_points(H_t, match_p_src, match_p_dst, t)
+            inlier_count = Ps_in.shape[1]
+            if inlier_count < min_inliers:
+                continue
+
+            # re-fit the model using all inliers
+            try:
+                H_refit = self.compute_homography_naive(Ps_in, Pd_in)
+            except Exception:
+                continue
+
+            # if err is better save the model
+            _, mse = self.test_homography(H_refit, Ps_in, Pd_in, t)
+            if (best_inlier_count == -1) or (mse < best_mse):
+                best_inlier_count = inlier_count
+                best_mse = mse
+                best_inliers_src = Ps_in
+                best_inliers_dst = Pd_in
+
+
+        if best_inlier_count > 0 and best_inliers_src is not None:
+            H = self.compute_homography_naive(best_inliers_src, best_inliers_dst)
+        else:
+            # fallback if no acceptable model found
+            H = self.compute_homography_naive(match_p_src, match_p_dst)
+
+        # normalize scale for stability
+        if abs(H[2, 2]) > 1e-12:
+            H = H / H[2, 2]
+
+        return H
 
     @staticmethod
     def compute_backward_mapping(
