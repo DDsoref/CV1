@@ -279,6 +279,7 @@ class Solution:
         mp_dst_meets_model = match_p_dst[:, mask]
 
         return mp_src_meets_model, mp_dst_meets_model
+    
     def compute_homography(self,
                            match_p_src: np.ndarray,
                            match_p_dst: np.ndarray,
@@ -412,7 +413,50 @@ class Solution:
 
         # return backward_warp
         """INSERT YOUR CODE HERE"""
-        pass
+        dst_h, dst_w, _ = dst_image_shape
+        src_h, src_w, _ = src_image.shape
+
+        # (1) Create meshgrid for destination image
+        xx_dst, yy_dst = np.meshgrid(np.arange(dst_w), np.arange(dst_h))
+        
+        # (2) Create homogeneous coordinates for destination
+        x_flat = xx_dst.flatten()
+        y_flat = yy_dst.flatten()
+        ones_flat = np.ones_like(x_flat)
+        p_dst_all = np.vstack((x_flat, y_flat, ones_flat)) # 3 x (H_dst * W_dst)
+
+        # (3) Apply backward homography: p_src = H_inv * p_dst
+        p_src_prime = backward_projective_homography @ p_dst_all
+        
+        # Normalize
+        w_prime = p_src_prime[2, :]
+        w_prime[w_prime == 0] = 1e-9 
+        x_src_norm = p_src_prime[0, :] / w_prime
+        y_src_norm = p_src_prime[1, :] / w_prime
+        
+        # (4) Create meshgrid of source image coords
+        xx_src, yy_src = np.meshgrid(np.arange(src_w), np.arange(src_h))
+        points_src = np.vstack((xx_src.flatten(), yy_src.flatten())).T
+        
+        # (5) Interpolate each channel
+        backward_map = np.zeros(dst_image_shape, dtype=src_image.dtype)
+        query_points = np.vstack((x_src_norm, y_src_norm)).T
+        
+        for channel in range(3):
+            # Get the values for the current channel from the source
+            values_src = src_image[:, :, channel].flatten()
+            
+            # Interpolate
+            interpolated_channel = griddata(points_src,       
+                                            values_src,      
+                                            query_points,    
+                                            method='cubic',  
+                                            fill_value=0)     
+            
+            # Reshape back to destination image shape
+            backward_map[:, :, channel] = interpolated_channel.reshape((dst_h, dst_w))
+
+        return backward_map
 
     @staticmethod
     def find_panorama_shape(src_image: np.ndarray,
@@ -504,7 +548,21 @@ class Solution:
         """
         # return final_homography
         """INSERT YOUR CODE HERE"""
-        pass
+        # (1) Build the translation matrix
+        translation_matrix = np.array([
+            [1, 0, -pad_left],
+            [0, 1, -pad_up],
+            [0, 0, 1]
+        ])
+        
+        # (2) Compose the homographies
+        final_homography = backward_homography @ translation_matrix
+        
+        # (3) Scale (normalize)
+        if abs(final_homography[2, 2]) > 1e-12:
+            final_homography /= final_homography[2, 2]
+            
+        return final_homography
 
     def panorama(self,
                  src_image: np.ndarray,
@@ -547,4 +605,35 @@ class Solution:
         """
         # return np.clip(img_panorama, 0, 255).astype(np.uint8)
         """INSERT YOUR CODE HERE"""
-        pass
+
+        # (1) Compute the FORWARD homography
+        H_forward = self.compute_homography(match_p_src, match_p_dst, 
+                                            inliers_percent, max_err)
+        
+        # Find the shape of the combined image
+        pano_h, pano_w, pads = self.find_panorama_shape(src_image, dst_image, H_forward)
+        
+        # (2) Compute the BACKWARD homography
+        H_backward = self.compute_homography(match_p_dst, match_p_src,
+                                             inliers_percent, max_err)
+
+        # (3) Add translation to the backward homography
+        H_backward_translated = self.add_translation_to_backward_homography(
+            H_backward, pads.pad_left, pads.pad_up)
+
+        # (4) Compute the backward warping
+        panorama_shape = (pano_h, pano_w, 3)
+        src_warped = self.compute_backward_mapping(
+            H_backward_translated, src_image, panorama_shape)
+        
+        # (5) Create the empty panorama and plant the destination image
+        img_panorama = np.zeros(panorama_shape, dtype=dst_image.dtype)
+        img_panorama[pads.pad_up: pads.pad_up + dst_image.shape[0],
+                     pads.pad_left: pads.pad_left + dst_image.shape[1]] = dst_image
+
+        # (6) Place the backward warped image
+        mask = (img_panorama == 0)
+        img_panorama[mask] = src_warped[mask]
+
+        # (7) Clip values
+        return np.clip(img_panorama, 0, 255).astype(np.uint8)
