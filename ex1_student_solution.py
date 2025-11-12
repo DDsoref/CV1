@@ -263,11 +263,10 @@ class Solution:
 
         # apply homography
         proj = homography @ src_h  # (3, N)
-
-        # normalize
         w = proj[2, :]
-        proj /= w  # normalize    w = np.where(np.abs(w) < 1e-9, 1e-9, w)
-        pred = proj[:2, :] / w  # (2, N)
+        # avoid division by zero
+        w = np.where(np.abs(w) < 1e-9, 1e-9, w)
+        pred = proj[:2, :] / w  # normalize to get (2, N)
 
         # compute squared distances
         diffs = pred - match_p_dst
