@@ -491,11 +491,11 @@ class Solution:
         src_rows_num, src_cols_num, _ = src_image.shape
         dst_rows_num, dst_cols_num, _ = dst_image.shape
         src_edges = {}
-        src_edges['upper left corner'] = np.array([1, 1, 1])
-        src_edges['upper right corner'] = np.array([src_cols_num, 1, 1])
-        src_edges['lower left corner'] = np.array([1, src_rows_num, 1])
+        src_edges['upper left corner'] = np.array([0, 0, 1])
+        src_edges['upper right corner'] = np.array([src_cols_num-1, 0, 1])
+        src_edges['lower left corner'] = np.array([0, src_rows_num-1, 1])
         src_edges['lower right corner'] = \
-            np.array([src_cols_num, src_rows_num, 1])
+            np.array([src_cols_num-1, src_rows_num-1, 1])
         transformed_edges = {}
         for corner_name, corner_location in src_edges.items():
             transformed_edges[corner_name] = homography @ corner_location
